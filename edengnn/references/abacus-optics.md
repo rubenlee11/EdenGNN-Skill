@@ -17,19 +17,18 @@ for source in "$T"/predict/*; do
   name=$(basename "$source")
   calc="$W/calculations/$name"
   cp -r "$source" "$calc"
-  sed -i -E '/^(out_mat_hs2|out_mat_r|out_band|out_dos|symmetry)[[:space:]]/d' "$calc/INPUT"
+  sed -i -E '/^(out_mat_hs2|out_mat_r|out_band|out_dos)[[:space:]]/d' "$calc/INPUT"
   cat >> "$calc/INPUT" <<'EOF'
 out_mat_hs2 1
 out_mat_r 1
 out_band 0
 out_dos 0
-symmetry -1
 EOF
 done
 printf '%s\n' "$W"/calculations/* > "$W/optics.txt"
 ```
 
-保留 `calculation nscf`、`basis_type lcao`、`init_chg drho` 和 `out_chg -1`。`out_mat_hs2 1` 输出 H/S，`out_mat_r 1` 输出位置矩阵，不能使用 gamma-only 局域轨道算法。保留生成的均匀 KPT；PyATB 积分网格在下一步独立设置。
+保留 `calculation nscf`、`basis_type lcao`、`init_chg drho` 和 `out_chg -1`。`out_mat_hs2 1` 输出 H/S，`out_mat_r 1` 输出位置矩阵，不能使用 gamma-only 局域轨道算法。对称性设置沿用原始 INPUT 模板，不因 PyATB 光学计算额外关闭对称性。保留生成的均匀 KPT；PyATB 积分网格在下一步独立设置。
 
 按实际机器的 ABACUS 模板执行所有 `optics.txt` 中的目录。本地示例（`ncore` 根据资源、基组和结构规模选择）：
 
