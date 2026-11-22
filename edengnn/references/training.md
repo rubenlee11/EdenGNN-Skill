@@ -123,3 +123,18 @@ edengnn-predict --config "$W/self_predict.yaml" > "$W/self_predict.log" 2>&1
 ```
 
 产物 `$W/self_predict/edengnn/<timestamp>/predict/<name>/`，其中 `OUT.EDENGNN/SPIN1_CHG.cube` 为差分密度，suffix 固定为 EDENGNN。接 [abacus.md](abacus.md) 第 2 节，跳过通用模型 results 下的时间戳选择，用本次 self_predict 下实际时间戳设置 T，执行 band/DOS 和绘图。
+
+仅在用户要求与 DFT 对比时，按现有 `scripts/abacus/stat.py` 的约定组织每个结构目录：
+
+| 子目录 | 计算及用途 | 必需输出（位于 `OUT.<suffix>/`） |
+| --- | --- | --- |
+| `nscf/` | 固定模型预测密度，均匀 k 网格 NSCF | `BANDS_1.dat`、`running_nscf.log` |
+| `band/` | 固定模型预测密度，高对称路径 NSCF | `BANDS_1.dat`、`running_nscf.log` |
+| `scf/` | DFT 参考，均匀 k 网格的实际收敛 SCF | `BANDS_1.dat`、`running_scf.log` |
+| `band_scf/` | 固定上述 DFT 收敛密度，高对称路径 NSCF | `BANDS_1.dat`、`running_nscf.log` |
+
+两侧保持相同的结构、原子顺序、赝势、轨道、截断能和自旋设置；`nscf/` 与 `scf/` 的均匀 k 网格一致，`band/` 与 `band_scf/` 的路径一致。用于统计的计算均设 `out_band=1`，包括默认 DOS 流程中原设为 `out_band=0` 的 `nscf/`。
+
+已有匹配的收敛 SCF 时，可复用其完整计算目录作为 `scf/`；不要将读取 DFT 密度的 NSCF 计算放入 `scf/`，也不要重命名日志或修改统计脚本来适配这种目录。`band_scf/` 才是使用 DFT 收敛密度的路径 NSCF 目录；读取总密度用 `init_chg=file`，读取差分密度用补丁版的 `init_chg=drho`，两者不能混用。
+
+预测和参考目录默认同处 `final/<name>/`；参考单独存放时，使用 `--dir-tar <root>`，该根目录下须有 `<name>/{scf,band_scf}`。预测侧输出后缀由 `--prefix` 指定，参考侧由 `--prefix-tar` 指定，均须与各自实际 `OUT.<suffix>` 一致。
