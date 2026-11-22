@@ -98,3 +98,89 @@ printf '%s\n' "$T_D" "$T_A" "$W/final/$NAME/band.png"
 ```
 
 density 在前、augmentation 在后；不要重复拼同一文件。固定密度计算必须将 SAD 的 NELM=0 改为正值。DOS 用均匀 KPOINTS_SCF，不用 band 路径。输出 `final/<name>/band/{vasprun.xml,EIGENVAL}`、`nscf/{vasprun.xml,DOSCAR}` 和 `band.png`。绘图命令成功退出后直接报告上述图像路径和时间戳，不检查 band.png、不打开图片；仅失败时读对应 `.log`/`vasp.out`。若结构名无扩展名，NAME 就是其文件名；多结构逐项沿用同一流程，不另写执行脚本。
+
+## 4. DFT 对照与验证（仅在用户要求时执行）
+
+适用于通用模型和自训练权重。用户要求验证预测、与 DFT/target 对比或叠加能带时，提前把本节加入完整作业流程。即使只要求能带叠图，也执行第 3 节的预测 NSCF：现有 `stat.py` 命令行入口同时读取 SCF/NSCF 做统计，不能只提供两套能带，也不要自行导入内部绘图函数。
+
+### 目录与复用
+
+默认把同一结构的四类结果放在同一个结构目录中，`plot.txt` 每行填写该结构目录：
+
+```text
+$W/final/<name>/
+  CHGCAR       # 模型预测的完整电荷密度（含 PAW augmentation）
+  band/        # 预测 CHGCAR，ICHARG=11，KPOINTS_BAND
+  nscf/        # 预测 CHGCAR，ICHARG=11，KPOINTS_SCF；也是预测 DOS
+  scf/         # 收敛 DFT target，ICHARG=1，KPOINTS_SCF
+  band_scf/    # target scf/CHGCAR，ICHARG=11，KPOINTS_BAND
+```
+
+`scf/` 和 `nscf/` 均需 `vasprun.xml`、`KPOINTS`、`CHGCAR`；`band/` 和 `band_scf/` 均需 `vasprun.xml`、`KPOINTS`。NSCF 使用 `LCHARG=False` 时，保留输入的预测 CHGCAR 供统计读取。
+
+先复用已有计算：第 3 节的 `band/`、`nscf/` 无需重算；训练标签或此前 DFT 对照中的收敛 SCF 可通过复制或符号链接放到 `scf/`。复用前确认与预测侧的结构、原子顺序、PAW、ENCUT、PREC、FFT 网格和均匀 k 网格一致；SAD 的 `NELM=0` 结果不能作为 target SCF。已有匹配的 `band_scf/` 也直接复用。缺哪项才补算哪项。
+
+若已有 target 位于独立目录，不必搬动：传入 `--dir-tar "$W/target"`，则脚本从 `$W/target/<name>/scf/` 和 `$W/target/<name>/band_scf/` 读取参考结果；预测侧仍为 `plot.txt` 中的 `$W/final/<name>/{band,nscf}/`。例如已有训练标签 `$W/scf/<name>/` 时，可将其链接为 `$W/final/<name>/scf`，不要把 SCF 父目录或 SAD 目录写进 `plot.txt`。
+
+### 缺少 target 时补算
+
+以下以默认同目录布局为例；多结构逐项准备和计算，最后统一调用统计。沿用本次 SAD 的 POSCAR、POTCAR、FFT 设置和配套 INCAR，不重新转换原胞或选择另一套赝势。
+
+```bash
+# 仅在没有可复用 target SCF 时执行。
+mkdir -p "$W/final/$NAME/scf"
+cp "$W/sad/$NAME/"{POSCAR,POTCAR,INCAR,CHGCAR} "$W/final/$NAME/scf/"
+cp "$W/sad/$NAME/KPOINTS_SCF" "$W/final/$NAME/scf/KPOINTS"
+python - <<'PY'
+import os
+from pathlib import Path
+from pymatgen.io.vasp.inputs import Incar
+path = Path(os.environ['W'])/'final'/os.environ['NAME']/'scf/INCAR'
+cfg = Incar.from_file(path)
+cfg.update(ICHARG=1, NELM=100, LCHARG=True, NEDOS=2001)
+cfg.write_file(path)
+PY
+(cd "$W/final/$NAME/scf" && bash "$E/scripts/vasp/submit.sh")
+```
+
+SCF 必须电子收敛后才作为 target；未收敛则报告并停止后续对照，不能把正常退出等同于收敛。对新算或复用的 SCF，检查收敛并生成缺少的 target 能带输入：
+
+```bash
+python - <<'PY'
+import os
+import shutil
+from pathlib import Path
+from pymatgen.io.vasp.inputs import Incar
+from pymatgen.io.vasp.outputs import Vasprun
+base = Path(os.environ['W'])/'final'/os.environ['NAME']
+scf = Vasprun(base/'scf/vasprun.xml', parse_dos=False, parse_eigen=False,
+              parse_projected_eigen=False, parse_potcar_file=False)
+if not scf.converged_electronic:
+    raise RuntimeError(f'Target SCF did not converge: {base / "scf"}')
+band_dir = base/'band_scf'
+band_dir.mkdir()
+for filename in ('POSCAR', 'POTCAR', 'INCAR', 'CHGCAR'):
+    shutil.copy2(base/'scf'/filename, band_dir/filename)
+shutil.copy2(Path(os.environ['W'])/'sad'/os.environ['NAME']/'KPOINTS_BAND',
+             band_dir/'KPOINTS')
+cfg = Incar.from_file(band_dir/'INCAR')
+cfg.update(ICHARG=11, NELM=100, LCHARG=False)
+cfg.write_file(band_dir/'INCAR')
+PY
+(cd "$W/final/$NAME/band_scf" && bash "$E/scripts/vasp/submit.sh")
+```
+
+### 批量对比入口
+
+全部结构计算完成后，使用第 3 节包含所有结构目录的同一份 `plot.txt`，只调用一次统计入口：
+
+```bash
+python "$E/scripts/vasp/stat.py" \
+  --filelist "$W/plot.txt" --save-dir "$W/statistics" \
+  --nproc "${plot_nproc:-${ncore:-1}}"
+# target 分开放置时，在上述命令中加 --dir-tar "$W/target"。
+```
+
+该入口生成各结构的 `band_compare.png` 和 `$W/statistics/stat_mae.json`，包含密度、augmentation、本征值、能量、带隙和力的统计。能带叠图以 target 的 VBM（金属为 Ef）为共同零点；本征值 MAE 来自均匀 k 网格，不能称作高对称路径上的误差。第 3 节的 `band.png` 是预测能带/DOS 图，不能替代 `band_compare.png`。
+
+直接运行现有脚本的命令行入口；不要写 `from stat import ...`、使用 importlib 加载脚本或另写比较绘图代码。命令报错时先反馈报错及涉及的输入目录，不临时绕过。交付时核对统计结果覆盖全部请求结构，不能仅因命令退出成功就把部分结构的结果当作全部完成。

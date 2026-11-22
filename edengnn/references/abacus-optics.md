@@ -1,6 +1,8 @@
 # ABACUS 通用模型 → PyATB 光学性质
 
-只在用户请求光学性质时读本页。先按 [abacus.md](abacus.md) 第 1 节批量预测，保留实际时间戳目录 `T`；已有本次预测时直接复用。只请求光学性质可跳过 band/DOS，不额外 SCF；用户要求 DFT 对比时执行下方“DFT 对比”。使用用户已配置的赝势和轨道，eqgnn 环境中的 `abacus` 与 `pyatb`。
+只在用户请求光学性质时读本页。先按 [abacus.md](abacus.md) 第 1 节批量预测，保留实际时间戳目录 `T`；已有本次预测时直接复用。只请求光学性质可跳过 band/DOS，不额外 SCF；用户要求 DFT 对比时执行下方“DFT 对比”。使用用户已配置的赝势和轨道。
+
+以下 `$E=$HOME/.edengnn`，`$W` 为本次源码目录外工作目录，路径写成绝对路径。环境从作业机器的 `$E/cpu.sh`、`$E/cuda.sh` 获取，ABACUS 的环境和执行命令取自 `$E/scripts/abacus/submit.sh`；PyATB 使用同一作业环境。沿用模板或用户指定的资源、工作位置和提交方式，不写死 conda 环境名、可执行文件路径、分区或核数。
 
 ## 1. 固定预测密度输出矩阵
 
@@ -37,7 +39,7 @@ while IFS= read -r calc; do
 done < "$W/optics.txt"
 ```
 
-集群直接打包准备好的计算目录传到 `~/.tmp`，修改现有 ABACUS 提交模板，申请合适核数提交；不在登录节点重新运行预测或 Python 准备。矩阵计算完成后整体同步回来，继续下节。不要把带 `#SBATCH` 的模板直接当本地脚本执行。
+集群按 SKILL.md 的作业流程，在实际作业目录准备输入并提交；计算和 PyATB 在计算节点运行。纯 CPU 流程合并到一个作业，阶段自动衔接；工作目录、资源及是否回传由用户要求和作业模板决定。不把带 `#SBATCH` 的模板当作已提交作业直接执行。
 
 每个结构产物在 `calculations/<name>/OUT.EDENGNN/`：
 
@@ -48,16 +50,15 @@ done < "$W/optics.txt"
 
 ## 2. PyATB 计算并批量绘图
 
-辅助脚本源码位于 `EdenGNN-main/scripts/abacus/abacus_optics.py`，安装时复制到 `~/.edengnn/scripts/abacus/abacus_optics.py`。它只做 Input 生成和批量绘图，不运行 DFT。它从实际 STRU 读取晶格、从本次日志读取费米能，并写入矩阵的绝对路径。`nspin` 取实际 INPUT（支持 1/4）；`occ_band -1` 按费米能判占据，金属不能简单取电子数一半作为固定占据带数。
+使用安装后的 `$E/scripts/abacus/abacus_optics.py`。它只做 Input 生成和批量绘图，不运行 DFT。它从实际 STRU 读取晶格、从本次日志读取费米能，并写入矩阵的绝对路径。先根据实际计算晶格和所需精度设置 `GRID_X/GRID_Y/GRID_Z`，不要沿用其他结构的固定网格。`nspin` 取实际 INPUT（支持 1/4）；`occ_band -1` 按费米能判占据，金属不能简单取电子数一半作为固定占据带数。
 
 ```bash
-conda activate eqgnn
 export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg
 # OMP/MKL 线程数和 MPI 进程数按实际已分配资源设置。
 S="$E/scripts/abacus/abacus_optics.py"
 cd "$W"
 python "$S" prepare --filelist "$W/optics.txt" \
-  --grid 12 12 12 --omega 0.1 10 --domega 0.05 --eta 0.1
+  --grid "$GRID_X" "$GRID_Y" "$GRID_Z" --omega 0.1 10 --domega 0.05 --eta 0.1
 while IFS= read -r calc; do
   (cd "$calc/pyatb" && pyatb > pyatb.log 2>&1)
 done < "$W/optics.txt"
@@ -70,9 +71,9 @@ python "$S" plot --filelist "$W/optics.txt"
 
 区分 ABACUS 的均匀 KPT（SCF 密度/费米能和矩阵计算）与 PyATB 的光学积分 `grid`。加密后者无需重新预测或重新计算已有 H/S/rR；不能用更密的 PyATB 网格代替 SCF 密度的 K 点收敛。
 
-当前 eqgnn 安装的 PyATB 计算接口要求显式指定 `grid`、`omega`、`domega`；接口的 eta 默认 0.01 eV、method 默认 1。`pyatb_input --optical` 的生成器则按 `|b_i| / 0.05 Å⁻¹` 取整生成网格（倒格矢含 2π），并写入 omega=0–10 eV、domega=0.01 eV、eta=0.1 eV。这里的 12³ 和 0.05 eV 步长是快速演示设置，不是 PyATB 默认值。当前安装生成器的 optical 分支使用固定 0.05 间距，不能假定 `--mp` 会修改它。
+PyATB 的光学积分需要指定 `grid`。可按实际 STRU 的倒格矢长度和参考间距 `Δk=0.05 Å⁻¹` 估算每方向点数 `N_i=max(1, int(|b_i|/Δk))`（倒格矢含 2π），或沿用当前 PyATB 输入生成器给出的网格。不要把某次安装版本的生成器参数当作所有版本的默认值，也不要把某个材料的网格写成通用默认值。
 
-定量光谱可以该自动网格为起点，保持 eta 和能量范围固定，进一步加密后比较峰位与强度；小晶胞常需数十点每方向，金属、窄展宽或尖锐结构可能需要更密。不存在对所有材料都收敛的固定网格。不自动做整套收敛扫描，按用户所需精度决定。当前四个测试 primitive cell 对应生成器网格：Al 53³、GaAs 38³、Si 40³、ZnO 47³。两侧对比必须使用相同的积分网格。
+该间距只作起点，不保证光谱收敛。用户要求加密时，仅修改 PyATB 网格并复用矩阵，保留能量范围、步长和展宽以便比较；更窄展宽通常需要更密网格。预测与 DFT 对比必须使用相同积分网格。不主动执行整套收敛扫描。
 
 当前计算是独立粒子带间光学响应，不含激子、声子辅助跃迁；金属完整低频响应还需 Drude 项，不能把本页带间结果当作完整金属介电函数。
 
@@ -119,7 +120,7 @@ done < "$W/optics.txt"
 
 如果赝势/轨道由 INPUT 的共享目录引用，沿用该设置，无需上述 `*.upf/*.orb` 复制。目标目录使用新的空目录，避免残留文件。按实际 ABACUS 提交模板批量运行 `target_optics.txt`，集群做法同第 1 节；确认日志报告 SCF 收敛后再计算 target 光谱，未收敛不能用于对比。
 
-PyATB 两侧使用相同的 grid、omega、domega、eta、method 和自旋设置，但各自读取对应计算的费米能；不做人工能量平移或剪刀修正。对绝缘体/金属都用 `occ_band -1`。target 的命令（DFT 结束且同步回实际 PyATB 运行机器后，建立指向预测侧 rR 的绝对路径软链接；以下对应上述 EDENGNN 后缀和目录布局）：
+PyATB 两侧使用相同的 grid、omega、domega、eta、method 和自旋设置，但各自读取对应计算的费米能；不做人工能量平移或剪刀修正。对绝缘体/金属都用 `occ_band -1`。target 的命令（在实际 PyATB 作业机器上，建立指向预测侧 rR 的绝对路径软链接；以下对应上述 EDENGNN 后缀和目录布局）：
 
 ```bash
 while IFS= read -r prediction; do
@@ -130,7 +131,7 @@ while IFS= read -r prediction; do
     "$output/data-rR-sparse.csr"
 done < "$W/optics.txt"
 python "$S" prepare --filelist "$W/target_optics.txt" \
-  --grid 12 12 12 --omega 0.1 10 --domega 0.05 --eta 0.1
+  --grid "$GRID_X" "$GRID_Y" "$GRID_Z" --omega 0.1 10 --domega 0.05 --eta 0.1
 while IFS= read -r calc; do
   (cd "$calc/pyatb" && pyatb > pyatb.log 2>&1)
 done < "$W/target_optics.txt"
@@ -147,10 +148,3 @@ python "$S" compare --filelist "$W/optics.txt" \
 
 交付对比图、误差文件、DFT target 路径、原始预测时间戳及光谱参数。误差仅代表相同独立粒子设置下的预测与 DFT 差异。
 
-## 验证范围
-
-2026-11-19 已实跑通用 ABACUS 模型的 Al、Si、GaAs、ZnO：本地预测 → lxw 固定预测密度输出 H/S/rR → 本地 eqgnn PyATB → 批量绘图。测试使用 nspin=1、12×12×12 网格、0.1–10 eV、步长 0.05 eV、展宽 0.1 eV；结果位于 `aips_tutorial/results/abacus_optics/`。nspin=4 的光学路径依据 PyATB 接口整理，本次未实跑；VASP 和自训练权重的光学流程尚未验证。
-
-DFT 对比已于 2026-11-19 对 Al、Si、GaAs、ZnO 完整实跑：lxw 收敛 SCF → 回传 H/S/rR → eqgnn PyATB → 批量对比图和 MAE。四者日志均确认 charge density convergence is achieved。target 在 `aips_tutorial/results/abacus_optics/target/`，对比图和 JSON 在对应 `calculations/<name>/`。两侧使用相同 12³ 演示积分网格，未做网格收敛。
-
-DFT target 的 rR 复用：已确认上述四结构预测/DFT 的 rR 逐字节相同；优化后的流程仅在预测侧输出 rR，DFT 侧通过软链接复用。

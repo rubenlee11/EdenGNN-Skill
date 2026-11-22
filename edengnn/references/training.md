@@ -6,7 +6,7 @@
 
 ## 演示训练
 
-- 当用户只给了很少的训练结构，比如少于10个，或者说是演示训练时，train.txt通过重复的方式增加到50个，这样能减少等待的时间。
+- 当用户只给了很少的训练结构，比如少于10个，或者说是演示训练时，train.txt通过重复的方式增加到50个，这样能减少等待的时间。val.txt不要重复。
 
 - 演示训练时Scheduler设置，用CosineAnnealingLR，max_steps和T_max设置为100步。
 
@@ -71,6 +71,8 @@ edengnn-predict --config "$W/self_predict.yaml" > "$W/self_predict.log" 2>&1
 ```
 
 产物 `$W/self_predict/edengnn/<timestamp>/predict/<name>`。task=2 输出已含 density 和 augmentation，直接当 CHGCAR 使用；分开训练的 task=0/1 各预测一次，density 在前拼接。接 [vasp.md](vasp.md) 第 3 节执行 band/DOS：task=2 将本次预测文件复制为 `$W/final/<name>/CHGCAR`，跳过通用模型的双时间戳选择和 cat；分开训练则将 T_D/T_A 设为这次实际输出。只有 density 分支不等于完整 PAW 预测。
+
+用户要求与 target/DFT 对比时，继续执行 [vasp.md 的 DFT 对照与验证](vasp.md#4-dft-对照与验证仅在用户要求时执行)。训练标签中的收敛 SCF 可直接复用；按该节组织目录，并补齐预测 NSCF 与 target 能带。不要只准备两套能带后自行导入绘图函数。
 
 ## ABACUS 训练
 

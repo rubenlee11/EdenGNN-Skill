@@ -13,6 +13,8 @@ description: >-
 - **通用模型（默认）**：只读所选后端的 [vasp.md](references/vasp.md) 或 [abacus.md](references/abacus.md)，按顺序连续执行。用户同时指定两种后端才读两份。
 - **训练或自训练权重**：再读 [training.md](references/training.md) 中对应后端部分；普通配置模板为 `~/.edengnn/config.yaml`。
 
+- **VASP 与 DFT 对比或验证预测是否正确**：执行 [vasp.md](references/vasp.md) 的“DFT 对照与验证”。提前准备预测侧 `band/nscf` 和 target 侧 `scf/band_scf`，按 `stat.py` 的目录约定复用已有结果，通过命令行入口批量叠图和统计；即使只要求能带对比，也保留该入口所需的 SCF/NSCF 输入。
+
 - **ABACUS 光学性质**：读 [abacus-optics.md](references/abacus-optics.md)，复用通用模型预测，输出 H/S/rR 后用 PyATB 计算介电函数和光学电导率。只请求光学时省略 band/DOS；已有矩阵可直接进入 PyATB。用户要求与 DFT 对比时，按该文档的“DFT 对比”生成收敛 SCF target（只输出 H/S，复用预测侧 rR），批量叠图并统计光谱误差。
 
 ## 执行边界
@@ -20,7 +22,7 @@ description: >-
 - 正常流程不读源码、不扫描仓库、不检查安装来源、不比对 checkpoint 内部结构、不做试运行或临时另写流程脚本；光学流程使用 `~/.edengnn/scripts/abacus/abacus_optics.py`。执行命令失败时先向用户反馈问题，而不是自行解决。
 - 模板默认值直接保留。通用模型只改输出目录、输入列表和必要路径（展开 `~`、修正已知文件名）；分块参数需要根据gpu修改，80G显存分块20000000，按比例设置。
 - 模型、config、DFT 模板默认位于（本地或服务器，看用户指定） `~/.edengnn/edengnn-uni/<后端>/`；默认文件可用就用，不重复询问。缺失时再请用户指定本地来源或确认下载来源。用户负责配置 pp.json 中的赝势/轨道路径，已有确认的配置直接复用；仅在缺失、无效时请求补齐，不替用户选版本。
-- 默认预测完成后运行固定密度 band 和均匀网格 DOS，再用现成 `plot_band.py` 出图。用户明确只要 band 时可省略 DOS；只要光学时按光学流程执行；不做额外 SCF 对照、网格收敛、训练或精度评估，除非用户要求。
+- 默认预测完成后运行固定密度 band 和均匀网格 DOS，再用现成 `plot_band.py` 出图。用户明确只要 band 且不要求 DFT 对照时可省略 DOS；VASP 对照需保留统计入口所需的均匀网格 NSCF；只要光学时按光学流程执行；不做额外 SCF 对照、网格收敛、训练或精度评估，除非用户要求。
 - 多结构绘图必须把所有结果目录写入同一个 `plot.txt`，只调用一次 `plot_band.py --filelist`；`--nproc` 使用作业模板或已分配资源允许的绘图并发数，不要在 shell 中逐结构调用绘图脚本。
 
 ## 运行环境与任务提交
